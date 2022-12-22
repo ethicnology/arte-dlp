@@ -1,0 +1,180 @@
+#!/usr/bin/env python
+
+# sudo mv arte-dlp /usr/local/bin
+# sudo chmod +x /usr/local/bin/arte-dlp
+# arte-dlp URL
+
+# arte-dlp
+# Copyright (C) 2022  ethicnology
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+import os, re, argparse, sys, subprocess
+
+
+def vtt2srt(file):
+    assert file.endswith(".vtt"), "input file should be .vtt"
+    output_path_filename = file[:-4] + ".srt"
+
+    time_pattern = r"\b\d{2}:\d{2}:\d{2}\.\d{3}\b --> \b\d{2}:\d{2}:\d{2}\.\d{3}\b"
+    tag_pattern = r"<.+?>"
+    count_time = 0
+    subtitles = False
+
+    sys.stderr.write("processing…       " + file + os.linesep)
+    with open(output_path_filename, "w") as output:
+        with open(file, "r") as input:
+            for line in input:
+                pattern = re.search(time_pattern, line)
+
+                if subtitles and not pattern:
+                    subtitle_line = line.strip()
+                    subtitle_line = re.sub(tag_pattern, "", subtitle_line)
+                    output.write(subtitle_line + os.linesep)
+
+                if pattern:
+                    count_time += 1
+                    time_string = pattern.group()
+                    output.write(str(count_time) + os.linesep)
+                    output.write(time_string.replace(".", ",") + os.linesep)
+                    subtitles = True
+    sys.stderr.write("done              " + output_path_filename + os.linesep)
+    return output_path_filename
+
+
+# license
+print(
+    """
+arte-dlp
+Copyright (C) 2022  ethicnology
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
+"""
+)
+
+# main program
+parser = argparse.ArgumentParser()
+parser.add_argument("url", help="yt-dlp url")
+args = parser.parse_args()
+
+# Check if yt-dlp is installed
+command = subprocess.run(["yt-dlp", "--version"], stdout=subprocess.PIPE)
+yt_dlp_version = command.stdout.decode().strip()
+assert yt_dlp_version != "", "Please install yt-dlp or add it to your path"
+sys.stderr.write("yt-dlp version:   " + yt_dlp_version + os.linesep)
+
+# Check if ffmpeg is installed
+command = subprocess.run(["ffmpeg", "-version"], stdout=subprocess.PIPE)
+ffmpeg_version = command.stdout.decode().strip()
+assert yt_dlp_version != "", "Please install ffmpeg or add it to your path"
+sys.stderr.write("ffmpeg version:   " + ffmpeg_version[15:20] + os.linesep)
+
+# Get the mkv filename of the future downloaded file
+command = subprocess.run(
+    ["yt-dlp", "--print", "filename", "--merge", "mkv", args.url],
+    stdout=subprocess.PIPE,
+)
+mkv_file = command.stdout.decode().strip()
+assert mkv_file != "", "Please check the URL, yt-dlp cannot fetch it"
+sys.stderr.write("download:         " + mkv_file + os.linesep)
+
+# Download audio, video merge them in a mkv container write the subtitles aside
+sys.stderr.write(
+    "downloading…      Please wait, no progress available, sorry" + os.linesep
+)
+command = subprocess.run(
+    [
+        "yt-dlp",
+        "--write-subs",
+        "--sub-langs",
+        "all",
+        "--sub-format",
+        "vtt",
+        "--merge",
+        "mkv",
+        args.url,
+    ],
+    stdout=subprocess.PIPE,
+)
+download = command.stdout.decode().strip()
+assert download != "", "Please check the URL, yt-dlp cannot fetch it"
+sys.stderr.write("done              " + mkv_file + os.linesep)
+
+# Get base_filename (removing .mkv) and seek all .vtt subtitles
+base_filename = mkv_file[:-4]
+path = "."
+vtt_subtitles = [
+    file
+    for file in os.listdir(path)
+    if file.startswith(base_filename) and file.endswith(".vtt")
+]
+
+# Prepare CLI args for subtitles merge
+prepare_subtitle_merge_command = [
+    "ffmpeg",
+    "-v",
+    "quiet",
+    "-i",
+    f'"{mkv_file}"',
+]
+subtitle_metadata = ["-map 0"]
+
+# Converts subtitles vtt -> srt and append the new sub to the merging command
+for count, subtitles in enumerate(vtt_subtitles):
+    new_srt_subtitle = vtt2srt(subtitles)
+    lang = new_srt_subtitle[-6:-4]
+    prepare_subtitle_merge_command.extend(["-i", f'"{new_srt_subtitle}"'])
+    subtitle_metadata.extend(
+        [f"-map {count+1}", f"-metadata:s:s:{count}", f"language={lang}"]
+    )
+
+# Add postprocessing CLI args for subtitles merge
+output_filename = f"new_{mkv_file}"
+prepare_subtitle_merge_command.extend(subtitle_metadata)
+prepare_subtitle_merge_command.extend(
+    [
+        "-c",
+        "copy",
+        "-c:s",
+        "srt",
+        "-default_mode",
+        "infer_no_subs",
+        f'"{output_filename}"',
+    ]
+)
+
+# Merge subtitles using FFMPEG
+string_command = " ".join(prepare_subtitle_merge_command)
+sys.stderr.write("subtitles merge command:" + os.linesep + string_command + os.linesep)
+result = subprocess.run(string_command, shell=True, stdout=subprocess.PIPE)
+sys.stderr.write("done              " + output_filename + os.linesep)
+out = result.stdout.decode()
+
+# remove subs
+subtitles = [
+    file
+    for file in os.listdir(path)
+    if file.startswith(base_filename)
+    and (file.endswith(".vtt") or file.endswith(".srt"))
+]
+sys.stderr.write("cleaning directory…" + os.linesep)
+for sub in subtitles:
+    sys.stderr.write("removing          " + sub + os.linesep)
+    os.remove(sub)
+sys.stderr.write("Thanks for using arte-dlp by ethicnology" + os.linesep)
