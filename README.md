@@ -1,5 +1,14 @@
 # arte-dlp
 
+## deprecated
+
+Please [read this issue](https://github.com/yt-dlp/yt-dlp/issues/5853)
+With the [custom fork of ffmpeg by yt-dlp](https://github.com/yt-dlp/FFmpeg-Builds) this script can can be useless using only this command:
+
+```sh
+yt-dlp --embed-subs --sub-langs all --convert-subs srt --ppa "EmbedSubtitle:-disposition:s:0 0" --merge mkv "URL"
+```
+
 ## motivation
 
 Many websites uses WebVTT (.vtt) subtitles that are not recognized by media center softwares or the rendering does not display well.
